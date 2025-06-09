@@ -25,11 +25,11 @@ import (
   "fmt"
   "io/ioutil"
   "log"
-  "os"
-  "os/exec"
+  //"os"
+  //"os/exec"
 
   "github.com/bmatcuk/doublestar/v4"
-  "github.com/kyokomi/emoji/v2"
+  // "github.com/kyokomi/emoji/v2"
   "github.com/spf13/cobra"
   "golang.org/x/exp/slices"
   "gopkg.in/yaml.v3"
@@ -41,8 +41,8 @@ var generateCmd = &cobra.Command{
   Short: "generate dockerfile for arm64",
   Long:  `generate dockerfile for arm64`,
   Run: func(cmd *cobra.Command, args []string) {
-    emoji.Println("Clean bitnami containers")
-    {
+    // emoji.Println("Clean bitnami containers")
+    /**{
       args := []string{"submodule", "update", "--init", "--recursive", "--checkout", "-f"}
       cmd := exec.Command("git", args...)
       cmd.Stdout = os.Stdout
@@ -51,7 +51,7 @@ var generateCmd = &cobra.Command{
         log.Panic(err)
       }
     }
-
+    **/
     buf, err := ioutil.ReadFile("config.yaml")
     if err != nil {
       log.Panic(err)
