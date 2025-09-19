@@ -1,0 +1,208 @@
+# syntax=docker/dockerfile:1.4
+# Copyright Broadcom, Inc. All Rights Reserved.
+# SPDX-License-Identifier: APACHE-2.0
+
+FROM docker.io/bitnami/minideb:bookworm
+
+ARG DOWNLOADS_URL="downloads.bitnami.com/files/stacksmith"
+ARG TARGETARCH
+
+LABEL com.vmware.cp.artifact.flavor="sha256:c50c90cfd9d12b445b011e6ad529f1ad3daea45c26d20b00732fae3cd71f6a83" \
+      org.opencontainers.image.base.name="docker.io/bitnami/minideb:bookworm" \
+      org.opencontainers.image.created="2025-03-04T10:15:18Z" \
+      org.opencontainers.image.description="Application repackaged by ZCube for arm64 compatible, originaly Bitnami" \
+      org.opencontainers.image.documentation="https://github.com/bitnami/containers/tree/main/bitnami/openldap/README.md" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.ref.name="2.6.9-debian-12-r64" \
+      org.opencontainers.image.source="https://github.com/ZCube/bitnami-compat" \
+      org.opencontainers.image.title="openldap" \
+      org.opencontainers.image.vendor="ZCube" \
+      org.opencontainers.image.version="2.6.9"
+
+ENV HOME="/" \
+    OS_ARCH="${TARGETARCH:-amd64}" \
+    OS_FLAVOUR="debian-12" \
+    OS_NAME="linux"
+
+COPY prebuildfs /
+SHELL ["/bin/bash", "-o", "errexit", "-o", "nounset", "-o", "pipefail", "-c"]
+# Install required system packages and dependencies
+RUN install_packages ca-certificates curl libargon2-1 libcap2-bin libcom-err2 libcrypt1 libgssapi-krb5-2 libk5crypto3 libkeyutils1 libkrb5-3 libkrb5support0 libltdl7 libnsl2 libnss3-tools libodbc2 libperl5.36 libsasl2-2 libssl3 libtirpc3 libwrap0 mdbtools procps psmisc
+RUN mkdir -p /tmp/bitnami/pkg/cache/ ; cd /tmp/bitnami/pkg/cache/ ; \
+    COMPONENTS=( \
+      "openldap-2.6.9-3-linux-${OS_ARCH}-debian-12" \
+    ) ; \
+    for COMPONENT in "${COMPONENTS[@]}"; do \
+      if [ ! -f "${COMPONENT}.tar.gz" ]; then \
+        curl -SsLf "https://${DOWNLOADS_URL}/${COMPONENT}.tar.gz" -O ; \
+        curl -SsLf "https://${DOWNLOADS_URL}/${COMPONENT}.tar.gz.sha256" -O ; \
+      fi ; \
+      sha256sum -c "${COMPONENT}.tar.gz.sha256" ; \
+      tar -zxf "${COMPONENT}.tar.gz" -C /opt/bitnami --strip-components=2 --no-same-owner --wildcards '*/files' ; \
+      rm -rf "${COMPONENT}".tar.gz{,.sha256} ; \
+    done
+# Reference #1 : https://github.com/tiredofit/docker-openldap/blob/2.6/Dockerfile
+# License #1 : MIT License
+# Reference #2 : https://github.com/osixia/docker-openldap/blob/master/image/Dockerfile
+# License #2 : MIT License
+
+ENV OPENLDAP_DOWNLOAD_URL https://openldap.org/software/download/OpenLDAP/openldap-release/openldap-2.6.9.tgz
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN mkdir -p /opt/bitnami/openldap/etc \
+    && mkdir -p /opt/bitnami/openldap/licenses
+
+RUN install_packages curl ca-certificates \
+ && mkdir -p /opt/bitnami/openldap/licenses \
+ && curl -L -o /opt/bitnami/openldap/licenses/LICENSE \
+    https://github.com/openldap/openldap/blob/master/LICENSE
+
+RUN set -eux; \
+    \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        krb5-kdc-ldap \
+        libargon2-1 \
+        libcrack2 \
+        librad0 \
+        libsasl2-modules \
+        libsasl2-modules-db \
+        libsasl2-modules-gssapi-mit \
+        libsasl2-modules-ldap \
+        libsasl2-modules-otp \
+        libsasl2-modules-sql \
+        libwrap0 \
+        openssl \
+        unixodbc \
+    ; \
+    savedAptMark="$(apt-mark showmanual)"; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        wget \
+        build-essential \
+        dpkg-dev \
+        groff-base \
+        libargon2-dev \
+        libc6-dev \
+        libcrack2-dev \
+        libevent-dev \
+        libkrb5-dev \
+        libltdl-dev \
+        libsasl2-dev \
+        libssl-dev \
+        libwrap0-dev \
+        heimdal-multidev \
+        make \
+        radlib-dev \
+        unixodbc-dev \
+    ; \
+    rm -rf /var/lib/apt/lists/*; \
+    \
+    curl -LO "$OPENLDAP_DOWNLOAD_URL"; \
+    mkdir -p /usr/src/openldap; \
+    tar -xzf openldap-2.6.9.tgz -C /usr/src/openldap --strip-components=1; \
+    rm openldap-2.6.9.tgz; \
+    \
+    cd /usr/src/openldap; \
+    ./configure \
+        --prefix=/usr \
+        --libexecdir=/usr/lib \
+        --sysconfdir=/etc \
+        --mandir=/usr/share/man \
+        --localstatedir=/opt/bitnami/openldap/var/run \
+        # --localstatedir=/var/run \
+        --with-systemd=no \
+        --enable-argon2 \
+        --enable-asyncmeta=mod \
+        --enable-balancer=yes \
+        --enable-crypt \
+        --enable-dnssrv=mod \
+        --enable-dynamic \
+        --enable-ldap=mod \
+        --enable-lload=mod \
+        --enable-mdb=yes \
+        --enable-meta=mod \
+        --enable-modules \
+        --enable-monitor=yes \
+        --enable-null=mod \
+        --enable-overlays=mod \
+        --enable-passwd=mod \
+        --enable-relay=mod \
+        --enable-slapd \
+        --enable-sock=mod \
+        --enable-spasswd \
+        --enable-sql=mod \
+        --with-cyrus-sasl \
+        --with-tls=openssl \
+    ; \
+    \
+    make -j install; \
+    \
+    make -j DESTDIR="" prefix=/usr libexecdir=/usr/lib -C contrib/slapd-modules/autogroup install; \
+    make -j DESTDIR="" prefix=/usr libexecdir=/usr/lib -C contrib/slapd-modules/lastbind install; \
+    sed -i 's/pw-netscape.la pw-radius.la pw-apr1.la/pw-netscape.la pw-apr1.la/g' contrib/slapd-modules/passwd/Makefile; \
+    make -j DESTDIR="" prefix=/usr libexecdir=/usr/lib -C contrib/slapd-modules/passwd install-lib; \
+    make -j DESTDIR="" prefix=/usr libexecdir=/usr/lib -C contrib/slapd-modules/passwd/pbkdf2 install; \
+    make -j DESTDIR="" prefix=/usr libexecdir=/usr/lib -C contrib/slapd-modules/passwd/sha2 install; \
+    make -j DESTDIR="" prefix=/usr libexecdir=/usr/lib -C contrib/slapd-modules/passwd/totp install; \
+    mkdir -p /usr/etc/openldap; \
+    make -j DESTDIR="" prefix=/usr libexecdir=/usr/lib -C contrib/slapd-modules/ppm install; \
+    export C_INCLUDE_PATH=/usr/include/heimdal ; \
+    make -j DESTDIR="" prefix=/usr libexecdir=/usr/lib -C contrib/slapd-modules/smbk5pwd install; \
+    \
+    apt-mark auto '.*' > /dev/null; \
+    [ -z "$savedAptMark" ] || apt-mark manual $savedAptMark > /dev/null; \
+    find /usr/local -type f -executable -exec ldd '{}' ';' \
+        | awk '/=>/ { print $(NF-1) }' \
+        | sort -u \
+        | xargs -r -n1 -I "{}" /bin/bash -c "dpkg-query --search {} || true" \
+        | cut -d: -f1 \
+        | sort -u \
+        | xargs -r apt-mark manual \
+    ; \
+    apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false;
+
+
+RUN mkdir -p /opt/bitnami/openldap/bin \
+    && mkdir -p /opt/bitnami/openldap/sbin \
+    && mkdir -p /opt/bitnami/openldap/lib \
+    && mkdir -p /opt/bitnami/openldap/conf \
+    && mkdir -p /opt/bitnami/openldap/var/run \
+    && mkdir -p /opt/bitnami/openldap/share \
+    && mkdir -p /bitnami/openldap/slapd.d \
+    && ln -s /usr/bin/ldap*                 /opt/bitnami/openldap/bin/ \
+    && ln -sf /usr/lib/slap*                /opt/bitnami/openldap/sbin/ \
+    && ln -sf /usr/sbin/slap*                /opt/bitnami/openldap/sbin/ \
+    && ln -s /usr/lib/openldap              /opt/bitnami/openldap/lib/
+    # && ln -s /etc/openldap/ldap.conf        /opt/bitnami/openldap/etc/ \
+    # && ln -s /etc/openldap/schema           /opt/bitnami/openldap/etc/ \
+    # && ln -s /etc/openldap/slapd.ldif       /opt/bitnami/openldap/share/ \
+    # && ln -s /bitnami/openldap/slapd.d      /etc/openldap/ \
+    # && chmod 664 /etc/openldap/slapd.ldif \
+    # && chmod 664 /etc/openldap/ldap.conf
+
+COPY --from=bitnami/openldap:2.6.9 /opt/bitnami/openldap/share /opt/bitnami/openldap/share
+COPY --from=bitnami/openldap:2.6.9 /opt/bitnami/openldap/etc /opt/bitnami/openldap/etc
+
+
+
+
+RUN apt-get autoremove --purge -y curl && \
+    apt-get update && apt-get upgrade -y && \
+    apt-get clean && rm -rf /var/lib/apt/lists /var/cache/apt/archives
+RUN chmod g+rwX /opt/bitnami
+RUN find / -perm /6000 -type f -exec chmod a-s {} \; || true
+
+COPY rootfs /
+RUN /opt/bitnami/scripts/openldap/postunpack.sh
+ENV APP_VERSION="2.6.9" \
+    BITNAMI_APP_NAME="openldap" \
+    PATH="/opt/bitnami/openldap/bin:/opt/bitnami/openldap/sbin:$PATH"
+
+EXPOSE 1389 1636
+
+USER 1001
+ENTRYPOINT [ "/opt/bitnami/scripts/openldap/entrypoint.sh" ]
+CMD [ "/opt/bitnami/scripts/openldap/run.sh" ]

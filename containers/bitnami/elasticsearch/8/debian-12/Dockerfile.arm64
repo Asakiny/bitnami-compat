@@ -1,0 +1,139 @@
+# syntax=docker/dockerfile:1.4
+FROM mikefarah/yq:4.45.1 AS yq
+
+
+# Copyright Broadcom, Inc. All Rights Reserved.
+# SPDX-License-Identifier: APACHE-2.0
+
+FROM docker.io/bitnami/minideb:bookworm
+
+ARG DOWNLOADS_URL="downloads.bitnami.com/files/stacksmith"
+ARG ELASTICSEARCH_PLUGINS
+ARG JAVA_EXTRA_SECURITY_DIR="/bitnami/java/extra-security"
+ARG TARGETARCH
+
+LABEL com.vmware.cp.artifact.flavor="sha256:c50c90cfd9d12b445b011e6ad529f1ad3daea45c26d20b00732fae3cd71f6a83" \
+      org.opencontainers.image.base.name="docker.io/bitnami/minideb:bookworm" \
+      org.opencontainers.image.created="2025-03-15T19:10:51Z" \
+      org.opencontainers.image.description="Application repackaged by ZCube for arm64 compatible, originaly Bitnami" \
+      org.opencontainers.image.documentation="https://github.com/bitnami/containers/tree/main/bitnami/elasticsearch/README.md" \
+      org.opencontainers.image.ref.name="8.17.3-debian-12-r64" \
+      org.opencontainers.image.source="https://github.com/ZCube/bitnami-compat" \
+      org.opencontainers.image.title="elasticsearch" \
+      org.opencontainers.image.vendor="ZCube" \
+      org.opencontainers.image.version="8.17.3"
+
+ENV HOME="/" \
+    OS_ARCH="${TARGETARCH:-amd64}" \
+    OS_FLAVOUR="debian-12" \
+    OS_NAME="linux" \
+    PATH="/opt/bitnami/common/bin:/opt/bitnami/java/bin:/opt/bitnami/elasticsearch/bin:$PATH"
+
+COPY prebuildfs /
+SHELL ["/bin/bash", "-o", "errexit", "-o", "nounset", "-o", "pipefail", "-c"]
+# Install required system packages and dependencies
+RUN install_packages ca-certificates curl libasound2-dev libc6 libfreetype6 libfreetype6-dev libgcc1 procps zlib1g
+RUN mkdir -p /tmp/bitnami/pkg/cache/ ; cd /tmp/bitnami/pkg/cache/ ; \
+    COMPONENTS=( \
+      "yq-4.45.1-6-linux-${OS_ARCH}-debian-12" \
+      "java-17.0.14-10-1-linux-${OS_ARCH}-debian-12" \
+      "elasticsearch-8.17.3-0-linux-${OS_ARCH}-debian-12" \
+    ) ; \
+    for COMPONENT in "${COMPONENTS[@]}"; do \
+      if [ ! -f "${COMPONENT}.tar.gz" ]; then \
+        curl -SsLf "https://${DOWNLOADS_URL}/${COMPONENT}.tar.gz" -O ; \
+        curl -SsLf "https://${DOWNLOADS_URL}/${COMPONENT}.tar.gz.sha256" -O ; \
+      fi ; \
+      sha256sum -c "${COMPONENT}.tar.gz.sha256" ; \
+      tar -zxf "${COMPONENT}.tar.gz" -C /opt/bitnami --strip-components=2 --no-same-owner --wildcards '*/files' ; \
+      rm -rf "${COMPONENT}".tar.gz{,.sha256} ; \
+    done
+# Reference: arm64v8/eclipse-temurin:8-focal
+# Reference: https://github.com/adoptium/temurin-build
+# License: Apache-2.0
+
+RUN install_packages curl unzip zip libatomic1 ca-certificates
+
+ENV JAVA_HOME=/opt/bitnami/java
+
+RUN export JAVA_VERSION=jdk-17.0.6%2B10 && \
+    export JAVA_PREFIX=OpenJDK17U && \
+    export JAVA_SUFFIX=hotspot_17.0.6_10 && \
+    mkdir -p $JAVA_HOME && \
+    ARCH="$(dpkg --print-architecture)" && \
+    case "${ARCH}" in aarch64 | arm64) \
+        BINARY_URL="https://github.com/adoptium/temurin17-binaries/releases/download/${JAVA_VERSION}/${JAVA_PREFIX}-jdk_aarch64_linux_${JAVA_SUFFIX}.tar.gz" \
+        ;; \
+    armhf | arm) \
+        BINARY_URL="https://github.com/adoptium/temurin17-binaries/releases/download/${JAVA_VERSION}/${JAVA_PREFIX}-jdk_arm_linux_${JAVA_SUFFIX}.tar.gz" \
+        ;; \
+    ppc64el | powerpc:common64) \
+        BINARY_URL="https://github.com/adoptium/temurin17-binaries/releases/download/${JAVA_VERSION}/${JAVA_PREFIX}-jdk_ppc64le_linux_${JAVA_SUFFIX}.tar.gz" \
+        ;; \
+    amd64 | i386:x86-64) \
+        BINARY_URL="https://github.com/adoptium/temurin17-binaries/releases/download/${JAVA_VERSION}/${JAVA_PREFIX}-jdk_x64_linux_${JAVA_SUFFIX}.tar.gz" \
+        ;; \
+    *) \
+        echo "Unsupported arch: ${ARCH}" \
+        exit 1 \
+        ;; \
+    esac && \
+    curl -L -o /tmp/openjdk.tar.gz ${BINARY_URL} && \
+    # echo "${ESUM} */tmp/openjdk.tar.gz" | sha256sum -c - && \
+    mkdir -p "$JAVA_HOME" && \
+    tar --extract --file /tmp/openjdk.tar.gz --directory "$JAVA_HOME" --strip-components 1 --no-same-owner && \
+    rm -f /tmp/openjdk.tar.gz ${JAVA_HOME}/src.zip && \
+    find "$JAVA_HOME/lib" -name '*.so' -exec dirname '{}' ';' | sort -u >/etc/ld.so.conf.d/docker-openjdk.conf && \
+    ldconfig
+
+
+# Reference : https://www.elastic.co/guide/en/elasticsearch/reference/current/targz.html
+
+RUN install_packages wget
+
+ENV ELASTICSEARCH_VERSION 8.17.3
+
+ENV ES_JAVA_HOME=/opt/bitnami/java
+
+RUN mkdir -p /opt/bitnami \
+    && cd /opt/bitnami \
+    && wget https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-${ELASTICSEARCH_VERSION}-linux-$(uname -m).tar.gz \
+    && wget https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-${ELASTICSEARCH_VERSION}-linux-$(uname -m).tar.gz.sha512 \
+    && cat elasticsearch-${ELASTICSEARCH_VERSION}-linux-$(uname -m).tar.gz.sha512 | sha512sum --check - \
+    && tar -xzf elasticsearch-${ELASTICSEARCH_VERSION}-linux-$(uname -m).tar.gz \
+    && mv elasticsearch-${ELASTICSEARCH_VERSION}/ elasticsearch \
+    && rm -rf elasticsearch-${ELASTICSEARCH_VERSION}-linux-$(uname -m)* \
+    && chown 1001:1001 -R /opt/bitnami/elasticsearch
+
+RUN  mv /opt/bitnami/elasticsearch/config/elasticsearch.yml /opt/bitnami/elasticsearch/config/es_config.sample
+
+
+RUN install_packages curl ca-certificates \
+ && mkdir -p /opt/bitnami/common/licenses \
+ && curl -L -o /opt/bitnami/common/licenses/LICENSE \
+    https://raw.githubusercontent.com/mikefarah/yq/master/LICENSE
+
+COPY --from=yq /usr/bin/yq /opt/bitnami/common/bin/
+
+
+
+
+RUN apt-get update && apt-get upgrade -y && \
+    apt-get clean && rm -rf /var/lib/apt/lists /var/cache/apt/archives
+RUN chmod g+rwX /opt/bitnami
+RUN find / -perm /6000 -type f -exec chmod a-s {} \; || true
+
+COPY rootfs /
+RUN /opt/bitnami/scripts/elasticsearch/postunpack.sh
+RUN /opt/bitnami/scripts/java/postunpack.sh
+ENV APP_VERSION="8.17.3" \
+    BITNAMI_APP_NAME="elasticsearch" \
+    ES_JAVA_HOME="/opt/bitnami/java" \
+    JAVA_HOME="/opt/bitnami/java" \
+    LD_LIBRARY_PATH="/opt/bitnami/elasticsearch/jdk/lib:/opt/bitnami/elasticsearch/jdk/lib/server:$LD_LIBRARY_PATH"
+
+EXPOSE 9200 9300
+
+USER 1001
+ENTRYPOINT [ "/opt/bitnami/scripts/elasticsearch/entrypoint.sh" ]
+CMD [ "/opt/bitnami/scripts/elasticsearch/run.sh" ]

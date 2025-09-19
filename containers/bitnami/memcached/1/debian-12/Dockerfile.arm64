@@ -1,0 +1,153 @@
+# syntax=docker/dockerfile:1.4
+# Copyright Broadcom, Inc. All Rights Reserved.
+# SPDX-License-Identifier: APACHE-2.0
+
+FROM docker.io/bitnami/minideb:bookworm
+
+ARG DOWNLOADS_URL="downloads.bitnami.com/files/stacksmith"
+ARG TARGETARCH
+
+LABEL com.vmware.cp.artifact.flavor="sha256:c50c90cfd9d12b445b011e6ad529f1ad3daea45c26d20b00732fae3cd71f6a83" \
+      org.opencontainers.image.base.name="docker.io/bitnami/minideb:bookworm" \
+      org.opencontainers.image.created="2025-02-20T22:22:31Z" \
+      org.opencontainers.image.description="Application repackaged by ZCube for arm64 compatible, originaly Bitnami" \
+      org.opencontainers.image.documentation="https://github.com/bitnami/containers/tree/main/bitnami/memcached/README.md" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.ref.name="1.6.37-debian-12-r64" \
+      org.opencontainers.image.source="https://github.com/ZCube/bitnami-compat" \
+      org.opencontainers.image.title="memcached" \
+      org.opencontainers.image.vendor="ZCube" \
+      org.opencontainers.image.version="1.6.37"
+
+ENV HOME="/" \
+    OS_ARCH="${TARGETARCH:-amd64}" \
+    OS_FLAVOUR="debian-12" \
+    OS_NAME="linux"
+
+COPY prebuildfs /
+SHELL ["/bin/bash", "-o", "errexit", "-o", "nounset", "-o", "pipefail", "-c"]
+# Install required system packages and dependencies
+RUN install_packages ca-certificates curl libevent-2.1-7 libsasl2-2 libsasl2-modules libssl3 netcat-openbsd procps sasl2-bin
+RUN mkdir -p /tmp/bitnami/pkg/cache/ ; cd /tmp/bitnami/pkg/cache/ ; \
+    COMPONENTS=( \
+      "memcached-1.6.37-0-linux-${OS_ARCH}-debian-12" \
+    ) ; \
+    for COMPONENT in "${COMPONENTS[@]}"; do \
+      if [ ! -f "${COMPONENT}.tar.gz" ]; then \
+        curl -SsLf "https://${DOWNLOADS_URL}/${COMPONENT}.tar.gz" -O ; \
+        curl -SsLf "https://${DOWNLOADS_URL}/${COMPONENT}.tar.gz.sha256" -O ; \
+      fi ; \
+      sha256sum -c "${COMPONENT}.tar.gz.sha256" ; \
+      tar -zxf "${COMPONENT}.tar.gz" -C /opt/bitnami --strip-components=2 --no-same-owner --wildcards '*/files' ; \
+      rm -rf "${COMPONENT}".tar.gz{,.sha256} ; \
+    done
+# refer : https://github.com/docker-library/memcached
+# license : BSD-3-Clause License
+# https://github.com/docker-library/memcached/blob/master/LICENSE
+
+RUN install_packages curl ca-certificates \
+ && mkdir -p /opt/bitnami/memcached/licenses \
+ && curl -L -o /opt/bitnami/memcached/licenses/LICENSE \
+    https://raw.githubusercontent.com/memcached/memcached/master/LICENSE
+
+RUN install_packages libsasl2-modules
+
+ENV MEMCACHED_VERSION 1.6.37
+ENV MEMCACHED_SHA1 b9da57ba63ba8de8a980fe0fe2fedc8d59e1dfe3
+
+RUN set -x \
+    \
+    && savedAptMark="$(apt-mark showmanual)" \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        dpkg-dev \
+        gcc \
+        libc6-dev \
+        libevent-dev \
+        libio-socket-ssl-perl \
+        libsasl2-dev \
+        libssl-dev \
+        make \
+        perl \
+        wget \
+    && rm -rf /var/lib/apt/lists/* \
+    \
+    && wget -O memcached-$MEMCACHED_VERSION.tar.gz "https://memcached.org/files/memcached-$MEMCACHED_VERSION.tar.gz" \
+    && wget -O memcached.tar.gz.sha1 "https://memcached.org/files/memcached-$MEMCACHED_VERSION.tar.gz.sha1" \
+    && cat memcached.tar.gz.sha1 | sha1sum -c - \
+    && mv memcached-$MEMCACHED_VERSION.tar.gz memcached.tar.gz \
+    && mkdir -p /usr/src/memcached \
+    && tar -xzf memcached.tar.gz -C /usr/src/memcached --strip-components=1 \
+    && rm memcached.tar.gz \
+    && rm memcached.tar.gz.sha1 \
+    \
+    && cd /usr/src/memcached \
+    \
+    && gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" \
+    && enableExtstore="$( \
+# https://github.com/docker-library/memcached/pull/38
+        case "$gnuArch" in \
+# https://github.com/memcached/memcached/issues/381 "--enable-extstore on s390x (IBM System Z mainframe architecture) fails tests"
+            s390x-*) ;; \
+            *) echo '--enable-extstore' ;; \
+        esac \
+    )" \
+    && ./configure \
+        --build="$gnuArch" \
+        --enable-sasl \
+        --enable-sasl-pwdb \
+        --enable-tls \
+        $enableExtstore \
+    && nproc="$(nproc)" \
+    && make -j "$nproc" \
+    \
+# see https://github.com/docker-library/memcached/pull/54#issuecomment-562797748 and https://bugs.debian.org/927461 for why we have to munge openssl.cnf
+    && sed -i.bak 's/SECLEVEL=2/SECLEVEL=1/g' /etc/ssl/openssl.cnf \
+    && make test PARALLEL="$nproc" \
+    && mv /etc/ssl/openssl.cnf.bak /etc/ssl/openssl.cnf \
+    \
+    && make install \
+    \
+    && cd / && rm -rf /usr/src/memcached \
+    \
+    && apt-mark auto '.*' > /dev/null \
+    && apt-mark manual $savedAptMark > /dev/null \
+    && find /usr/local -type f -executable -exec ldd '{}' ';' \
+        | awk '/=>/ { print $(NF-1) }' \
+        | sort -u \
+        | xargs -r -n1 -I "{}" /bin/bash -c "dpkg-query --search {} || true" \
+        | cut -d: -f1 \
+        | sort -u \
+        | xargs -r apt-mark manual \
+    && apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false \
+    \
+    && memcached -V
+
+RUN mkdir -p /opt/bitnami/memcached/bin \
+    && mkdir -p /opt/bitnami/memcached/sbin \
+    && mkdir -p /opt/bitnami/memcached/lib \
+    && ln -s /usr/local/bin/memcached                     /opt/bitnami/memcached/bin/
+
+
+
+
+RUN apt-get autoremove --purge -y curl && \
+    apt-get update && apt-get upgrade -y && \
+    apt-get clean && rm -rf /var/lib/apt/lists /var/cache/apt/archives
+RUN chmod g+rwX /opt/bitnami
+RUN find / -perm /6000 -type f -exec chmod a-s {} \; || true
+RUN ln -s /opt/bitnami/scripts/memcached/entrypoint.sh /entrypoint.sh
+RUN ln -s /opt/bitnami/scripts/memcached/run.sh /run.sh
+
+COPY rootfs /
+RUN /opt/bitnami/scripts/memcached/postunpack.sh
+ENV APP_VERSION="1.6.37" \
+    BITNAMI_APP_NAME="memcached" \
+    PATH="/opt/bitnami/memcached/bin:$PATH"
+
+EXPOSE 11211
+
+USER 1001
+ENTRYPOINT [ "/opt/bitnami/scripts/memcached/entrypoint.sh" ]
+CMD [ "/opt/bitnami/scripts/memcached/run.sh" ]
